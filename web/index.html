@@ -37,7 +37,7 @@
 <script type="module">
 import { createVega } from "./vega-web.js";
 const $ = (id) => document.getElementById(id);
-const GOOD = new Set(["anikoto","animesub","dramacool","durbinLive","gokuHD","internetArchive","kickAssAnime","torrentio","vega"]);
+const GOOD = new Set(["anikoto","animesub","dramacool","durbinLive","gokuHD","internetArchive","kickAssAnime","vega"]);
 let vega, hls;
 const store = { get: (k, d) => { try { return localStorage.getItem("vw:" + k) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem("vw:" + k, v); } catch {} } };
 $("worker").value = store.get("worker", "https://twilight-smoke-5ba9.adityaarya93506.workers.dev");
@@ -103,6 +103,7 @@ async function streams(link, type) {
 function play(s) {
   const v = $("v"); if (hls) { hls.destroy(); hls = null; }
   if (s.type === "embed") return window.open(s.link, "_blank");
+  if (s.type === "torrent" || /^magnet:/i.test(s.link)) return status("Ye torrent link hai, browser mein seedha nahi chalega", true);
   status("Playing: " + s.server);
   const isHls = s.type === "m3u8" || /m3u8/i.test(s.link);
   if (isHls && window.Hls && Hls.isSupported()) { hls = new Hls(); hls.loadSource(s.playUrl); hls.attachMedia(v); hls.on(Hls.Events.ERROR, async (_, d) => { if (!d.fatal) return; let info = ""; try { const r = await fetch(s.playUrl); const t = await r.text(); info = " | worker HTTP " + r.status + ": " + t.slice(0, 90).replace(/\s+/g, " "); } catch (e) { info = " | fetch fail: " + e.message; } status("HLS " + d.details + (d.response ? " (" + d.response.code + ")" : "") + info + " | host: " + (() => { try { return new URL(decodeURIComponent(s.playUrl.split("url=")[1].split("&")[0])).hostname; } catch { return "?"; } })(), true); }); }
