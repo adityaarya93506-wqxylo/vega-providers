@@ -9,8 +9,8 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 const ALLOWED = new Set(["user-agent", "referer", "origin", "accept", "accept-language", "cookie", "authorization", "x-requested-with", "x-api-key", "content-type"]);
 
 const URLS_UPSTREAM = "https://raw.githubusercontent.com/Zenda-Cross/vega-providers/refs/heads/main/urls.json";
-const URLS_FORK = "https://raw.githubusercontent.com/adityaarya93506-wqxylo/vega-providers/main/urls.json";
-const remap = (u) => (u === URLS_UPSTREAM ? URLS_FORK : u); // providers read base domains from urls.json: use the fork's copy
+// Our own domain overrides live in web/urls-override.json, so upstream files stay untouched (no sync conflicts)
+const OVERRIDES_URL = "https://raw.githubusercontent.com/adityaarya93506-wqxylo/vega-providers/main/web/urls-override.json";
 
 const b64u = (obj) =>
   btoa(JSON.stringify(obj).replace(/[\u0080-\uFFFF]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0")))
@@ -39,6 +39,20 @@ export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio, 
   axios = axios || (await import("https://esm.sh/axios@1.10.0")).default;
   cheerio = cheerio || (await import("https://esm.sh/cheerio@1.1.0"));
   const nativeFetch = globalThis.fetch.bind(globalThis);
+  // upstream urls.json + our overrides (cached 10 min)
+  let urlsCache;
+  const mergedUrls = () => {
+    if (!urlsCache || Date.now() - urlsCache.t > 600000) {
+      urlsCache = { t: Date.now(), p: (async () => {
+        const j = (u) => nativeFetch(u).then((r) => r.json()).catch(() => ({}));
+        const [a, b] = await Promise.all([j(URLS_UPSTREAM), j(OVERRIDES_URL)]);
+        const out = { ...a };
+        for (const [k, v] of Object.entries(b)) out[k] = { ...(a[k] || { name: k }), ...v };
+        return out;
+      })() };
+    }
+    return urlsCache.p;
+  };
 
   const onlyGet = (method, url) => {
     const ok = /^(GET|HEAD)$/i.test(method) || (allowPost && /^POST$/i.test(method));
@@ -47,7 +61,8 @@ export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio, 
 
   // fetch() that provider code sees — everything goes through the worker
   const proxiedFetch = async (input, init = {}) => {
-    const url = remap(typeof input === "string" ? input : input.url || String(input));
+    const url = typeof input === "string" ? input : input.url || String(input);
+    if (url === URLS_UPSTREAM) return new Response(JSON.stringify(await mergedUrls()), { status: 200, headers: { "content-type": "application/json" } });
     const method = (init.method || "GET").toUpperCase();
     onlyGet(method, url);
     const hdrs = init.headers instanceof Headers ? Object.fromEntries(init.headers.entries()) : init.headers;
@@ -58,7 +73,8 @@ export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio, 
   const inst = axios.create({
     adapter: async (config) => {
       const method = (config.method || "get").toUpperCase();
-      const target = remap(axios.getUri(config));
+      const target = axios.getUri(config);
+      if (target === URLS_UPSTREAM) return { data: JSON.stringify(await mergedUrls()), status: 200, statusText: "OK", headers: { "content-type": "application/json" }, config, request: {} };
       onlyGet(method, target);
       const res = await nativeFetch(proxyUrl(worker, target, config.headers), { method, signal: config.signal, ...(method === "POST" ? { body: config.data } : {}) });
       const binary = config.responseType === "arraybuffer" || config.responseType === "blob";
