@@ -8,6 +8,10 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 // Same list as the worker's ALLOWED_HEADERS
 const ALLOWED = new Set(["user-agent", "referer", "origin", "accept", "accept-language", "cookie", "authorization", "x-requested-with", "x-api-key", "content-type"]);
 
+const URLS_UPSTREAM = "https://raw.githubusercontent.com/Zenda-Cross/vega-providers/refs/heads/main/urls.json";
+const URLS_FORK = "https://raw.githubusercontent.com/adityaarya93506-wqxylo/vega-providers/main/urls.json";
+const remap = (u) => (u === URLS_UPSTREAM ? URLS_FORK : u); // providers read base domains from urls.json: use the fork's copy
+
 const b64u = (obj) =>
   btoa(JSON.stringify(obj).replace(/[\u0080-\uFFFF]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0")))
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -43,7 +47,7 @@ export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio, 
 
   // fetch() that provider code sees — everything goes through the worker
   const proxiedFetch = async (input, init = {}) => {
-    const url = typeof input === "string" ? input : input.url || String(input);
+    const url = remap(typeof input === "string" ? input : input.url || String(input));
     const method = (init.method || "GET").toUpperCase();
     onlyGet(method, url);
     const hdrs = init.headers instanceof Headers ? Object.fromEntries(init.headers.entries()) : init.headers;
@@ -54,7 +58,7 @@ export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio, 
   const inst = axios.create({
     adapter: async (config) => {
       const method = (config.method || "get").toUpperCase();
-      const target = axios.getUri(config);
+      const target = remap(axios.getUri(config));
       onlyGet(method, target);
       const res = await nativeFetch(proxyUrl(worker, target, config.headers), { method, signal: config.signal, ...(method === "POST" ? { body: config.data } : {}) });
       const binary = config.responseType === "arraybuffer" || config.responseType === "blob";
