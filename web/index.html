@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vega Web</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font: 15px system-ui, sans-serif; margin: 0; padding: 12px; background: #111; color: #eee; max-width: 900px; margin-inline: auto; }
+  input, select, button { font: inherit; padding: 8px; margin: 3px 0; border-radius: 8px; border: 1px solid #444; background: #222; color: #eee; max-width: 100%; }
+  input[type=text] { width: 100%; box-sizing: border-box; }
+  button { cursor: pointer; } button:hover { background: #333; }
+  #status { color: #8ab4f8; min-height: 1.3em; margin: 6px 0; word-break: break-word; }
+  #status.err { color: #f28b82; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
+  .card { background: #1c1c1c; border-radius: 8px; overflow: hidden; cursor: pointer; font-size: 12px; }
+  .card img { width: 100%; aspect-ratio: 2/3; object-fit: cover; background: #333; display: block; }
+  .card div { padding: 4px 6px; }
+  #detail button { display: block; width: 100%; text-align: left; }
+  video { width: 100%; max-height: 60vh; background: #000; margin-top: 8px; }
+  h4 { margin: 10px 0 4px; }
+</style>
+</head>
+<body>
+<h3>Vega Web demo</h3>
+<input type="text" id="worker" placeholder="https://your-worker.workers.dev">
+<label><input type="checkbox" id="post"> Worker mein POST support laga diya hai</label><br>
+<button id="go">Connect</button>
+<select id="prov" disabled></select>
+<select id="cat" disabled></select>
+<div id="status"></div>
+<video id="v" controls playsinline></video>
+<div id="detail"></div>
+<div id="grid"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+<script type="module">
+import { createVega } from "./vega-web.js";
+const $ = (id) => document.getElementById(id);
+const GOOD = new Set(["anikoto","animesub","dramacool","durbinLive","gokuHD","internetArchive","kickAssAnime","torrentio","vega"]);
+let vega, hls;
+const store = { get: (k, d) => { try { return localStorage.getItem("vw:" + k) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem("vw:" + k, v); } catch {} } };
+$("worker").value = store.get("worker", "https://twilight-smoke-5ba9.adityaarya93506.workers.dev");
+$("post").checked = store.get("post", "0") === "1";
+
+const status = (m, err) => { $("status").textContent = m || ""; $("status").className = err ? "err" : ""; };
+const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); kids.forEach((k) => e.append(k)); return e; };
+const run = async (label, fn) => { status(label + "…"); try { const r = await fn(); status(""); return r; } catch (e) { status(label + " fail: " + (e.message || e), true); console.error(e); } };
+
+$("go").onclick = async () => {
+  store.set("worker", $("worker").value.trim()); store.set("post", $("post").checked ? "1" : "0");
+  await run("Connecting", async () => {
+    vega = await createVega({ worker: $("worker").value.trim(), allowPost: $("post").checked });
+    const list = (await vega.providers()).sort((a, b) => GOOD.has(b.value) - GOOD.has(a.value));
+    $("prov").replaceChildren(...list.map((p) => el("option", { value: p.value, textContent: (GOOD.has(p.value) ? "✅ " : "") + p.display_name + " (" + p.value + ")" })));
+    $("prov").disabled = false; $("cat").disabled = false;
+    await loadCats();
+  });
+};
+$("prov").onchange = loadCats;
+$("cat").onchange = loadPosts;
+
+async function loadCats() {
+  await run("Catalog", async () => {
+    const c = await vega.catalog($("prov").value);
+    const all = [...c.catalog, ...c.genres];
+    $("cat").replaceChildren(...all.map((x) => el("option", { value: x.filter, textContent: x.title })));
+  });
+  await loadPosts();
+}
+async function loadPosts() {
+  $("grid").replaceChildren(); $("detail").replaceChildren();
+  const posts = await run("Posts", () => vega.getPosts($("prov").value, { filter: $("cat").value || "", page: 1 }));
+  if (!posts) return;
+  if (!posts.length) return status("Koi post nahi mila (provider band ho sakta hai)", true);
+  $("grid").replaceChildren(...posts.map((p) => {
+    const card = el("div", { className: "card" }, el("img", { src: p.image, loading: "lazy", referrerPolicy: "no-referrer" }), el("div", { textContent: p.title }));
+    card.onclick = () => openPost(p); return card;
+  }));
+}
+async function openPost(p) {
+  const meta = await run("Meta", () => vega.getMeta($("prov").value, p.link));
+  if (!meta) return;
+  const d = $("detail"); d.replaceChildren(el("h4", { textContent: meta.title }), el("div", { textContent: (meta.synopsis || "").slice(0, 300) }));
+  (meta.linkList || []).forEach((l) => {
+    d.append(el("h4", { textContent: l.title + (l.quality ? " · " + l.quality : "") }));
+    if (l.episodesLink) d.append(btn("Episodes dikhao", async () => {
+      const eps = await run("Episodes", () => vega.getEpisodes($("prov").value, l.episodesLink));
+      (eps || []).forEach((e) => d.append(btn(e.title, () => streams(e.link, "series"))));
+    }));
+    (l.directLinks || []).forEach((x) => d.append(btn(x.title, () => streams(x.link, x.type || meta.type || "movie"))));
+  });
+  d.scrollIntoView({ behavior: "smooth" });
+}
+const btn = (t, fn) => { const b = el("button", { textContent: t }); b.onclick = fn; return b; };
+async function streams(link, type) {
+  const s = await run("Streams", () => vega.getStream($("prov").value, link, type));
+  if (!s) return;
+  if (!s.length) return status("Is link ke liye koi stream nahi mili", true);
+  const d = $("detail"); d.append(el("h4", { textContent: "Servers" }));
+  s.forEach((x) => d.append(btn(`${x.server} · ${x.type}${x.quality ? " · " + x.quality : ""}`, () => play(x))));
+}
+function play(s) {
+  const v = $("v"); if (hls) { hls.destroy(); hls = null; }
+  if (s.type === "embed") return window.open(s.link, "_blank");
+  status("Playing: " + s.server);
+  const isHls = s.type === "m3u8" || /m3u8/i.test(s.link);
+  if (isHls && window.Hls && Hls.isSupported()) { hls = new Hls(); hls.loadSource(s.playUrl); hls.attachMedia(v); hls.on(Hls.Events.ERROR, (_, d) => d.fatal && status("HLS error: " + d.details, true)); }
+  else v.src = s.playUrl;
+  v.play().catch(() => {});
+  v.scrollIntoView({ behavior: "smooth" });
+}
+</script>
+</body>
+</html>
