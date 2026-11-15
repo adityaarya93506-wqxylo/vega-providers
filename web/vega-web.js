@@ -6,7 +6,7 @@
 const DEFAULT_BASE = "https://cdn.jsdelivr.net/gh/adityaarya93506-wqxylo/vega-providers@main";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36";
 // Same list as the worker's ALLOWED_HEADERS
-const ALLOWED = new Set(["user-agent", "referer", "origin", "accept", "accept-language", "cookie", "authorization", "x-requested-with", "x-api-key"]);
+const ALLOWED = new Set(["user-agent", "referer", "origin", "accept", "accept-language", "cookie", "authorization", "x-requested-with", "x-api-key", "content-type"]);
 
 const b64u = (obj) =>
   btoa(JSON.stringify(obj).replace(/[\u0080-\uFFFF]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0")))
@@ -27,7 +27,8 @@ export function proxyUrl(worker, target, headers) {
   return `${worker}/api/proxy?url=${encodeURIComponent(target)}` + (Object.keys(h).length ? `&headers=${b64u(h)}` : "");
 }
 
-export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio } = {}) {
+// allowPost: set true only after your worker supports POST on /api/proxy (see README)
+export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio, allowPost = false } = {}) {
   if (!worker) throw new Error("createVega: `worker` URL is required");
   worker = worker.replace(/\/+$/, "");
   base = base.replace(/\/+$/, "");
@@ -36,7 +37,8 @@ export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio }
   const nativeFetch = globalThis.fetch.bind(globalThis);
 
   const onlyGet = (method, url) => {
-    if (!/^(GET|HEAD)$/i.test(method)) throw new Error(`Worker proxy supports only GET/HEAD, got ${method.toUpperCase()} (${url})`);
+    const ok = /^(GET|HEAD)$/i.test(method) || (allowPost && /^POST$/i.test(method));
+    if (!ok) throw new Error(`Worker proxy supports only GET/HEAD${allowPost ? "/POST" : ""}, got ${method.toUpperCase()} (${url})`);
   };
 
   // fetch() that provider code sees — everything goes through the worker
@@ -45,7 +47,7 @@ export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio }
     const method = (init.method || "GET").toUpperCase();
     onlyGet(method, url);
     const hdrs = init.headers instanceof Headers ? Object.fromEntries(init.headers.entries()) : init.headers;
-    return nativeFetch(proxyUrl(worker, url, hdrs), { method, signal: init.signal });
+    return nativeFetch(proxyUrl(worker, url, hdrs), { method, signal: init.signal, ...(method === "POST" ? { body: init.body } : {}) });
   };
 
   // axios instance that sends every request through the worker
@@ -54,7 +56,7 @@ export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio }
       const method = (config.method || "get").toUpperCase();
       const target = axios.getUri(config);
       onlyGet(method, target);
-      const res = await nativeFetch(proxyUrl(worker, target, config.headers), { method, signal: config.signal });
+      const res = await nativeFetch(proxyUrl(worker, target, config.headers), { method, signal: config.signal, ...(method === "POST" ? { body: config.data } : {}) });
       const binary = config.responseType === "arraybuffer" || config.responseType === "blob";
       const data = binary ? await res.arrayBuffer() : await res.text();
       const response = {
