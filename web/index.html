@@ -37,7 +37,7 @@
 <script type="module">
 import { createVega } from "./vega-web.js";
 const $ = (id) => document.getElementById(id);
-const GOOD = new Set(["anikoto","animesub","dramacool","durbinLive","gokuHD","internetArchive","kickAssAnime","vega","movies4u","moviezwap"]);
+const GOOD = new Set(["anikoto","animesub","dramacool","durbinLive","gokuHD","internetArchive","kickAssAnime","vega","movies4u","moviezwap","luxMovies"]);
 let vega, hls;
 const store = { get: (k, d) => { try { return localStorage.getItem("vw:" + k) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem("vw:" + k, v); } catch {} } };
 $("worker").value = store.get("worker", "https://twilight-smoke-5ba9.adityaarya93506.workers.dev");
