@@ -105,7 +105,7 @@ function play(s) {
   if (s.type === "embed") return window.open(s.link, "_blank");
   status("Playing: " + s.server);
   const isHls = s.type === "m3u8" || /m3u8/i.test(s.link);
-  if (isHls && window.Hls && Hls.isSupported()) { hls = new Hls(); hls.loadSource(s.playUrl); hls.attachMedia(v); hls.on(Hls.Events.ERROR, (_, d) => d.fatal && status("HLS error: " + d.details, true)); }
+  if (isHls && window.Hls && Hls.isSupported()) { hls = new Hls(); hls.loadSource(s.playUrl); hls.attachMedia(v); hls.on(Hls.Events.ERROR, async (_, d) => { if (!d.fatal) return; let info = ""; try { const r = await fetch(s.playUrl); const t = await r.text(); info = " | worker HTTP " + r.status + ": " + t.slice(0, 90).replace(/\s+/g, " "); } catch (e) { info = " | fetch fail: " + e.message; } status("HLS " + d.details + (d.response ? " (" + d.response.code + ")" : "") + info + " | host: " + (() => { try { return new URL(decodeURIComponent(s.playUrl.split("url=")[1].split("&")[0])).hostname; } catch { return "?"; } })(), true); }); }
   else v.src = s.playUrl;
   v.play().catch(() => {});
   v.scrollIntoView({ behavior: "smooth" });
