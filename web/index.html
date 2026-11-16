@@ -26,6 +26,7 @@
 <input type="text" id="worker" placeholder="https://your-worker.workers.dev">
 <label><input type="checkbox" id="post"> Worker mein POST support laga diya hai</label><br>
 <button id="go">Connect</button>
+<button id="loc" title="Termux mini-proxy">Local</button>
 <select id="prov" disabled></select>
 <select id="cat" disabled></select>
 <div id="status"></div>
@@ -35,7 +36,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
 <script type="module">
-import { createVega } from "./vega-web.js?v=5";
+import { createVega } from "./vega-web.js?v=6";
 const $ = (id) => document.getElementById(id);
 const GOOD = new Set(["anikoto","animesub","dramacool","durbinLive","gokuHD","internetArchive","kickAssAnime","vega","movies4u","moviezwap","luxMovies","animeworld","kisskhml","animesalt"]);
 let vega, hls;
@@ -57,6 +58,7 @@ $("go").onclick = async () => {
     await loadCats();
   });
 };
+$("loc").onclick = () => { $("worker").value = "http://127.0.0.1:8787"; $("post").checked = true; status("Local proxy set. Termux mein mini-proxy chalu karke Connect dabao"); };
 $("prov").onchange = loadCats;
 $("cat").onchange = loadPosts;
 
