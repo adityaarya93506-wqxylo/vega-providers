@@ -8,6 +8,7 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 // Same list as the worker's ALLOWED_HEADERS
 const ALLOWED = new Set(["user-agent", "referer", "origin", "accept", "accept-language", "cookie", "authorization", "x-requested-with", "x-api-key", "content-type"]);
 
+const DEFAULT_CUSTOM = "https://raw.githubusercontent.com/adityaarya93506-wqxylo/vega-providers/main/web/custom"; // our own providers (no upstream conflicts)
 const URLS_UPSTREAM = "https://raw.githubusercontent.com/Zenda-Cross/vega-providers/refs/heads/main/urls.json";
 // Our own domain overrides live in web/urls-override.json, so upstream files stay untouched (no sync conflicts)
 const OVERRIDES_URL = "https://raw.githubusercontent.com/adityaarya93506-wqxylo/vega-providers/main/web/urls-override.json";
@@ -32,13 +33,16 @@ export function proxyUrl(worker, target, headers) {
 }
 
 // allowPost: set true only after your worker supports POST on /api/proxy (see README)
-export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio, allowPost = false } = {}) {
+export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio, allowPost = false, customBase = DEFAULT_CUSTOM } = {}) {
   if (!worker) throw new Error("createVega: `worker` URL is required");
   worker = worker.replace(/\/+$/, "");
   base = base.replace(/\/+$/, "");
   axios = axios || (await import("https://esm.sh/axios@1.10.0")).default;
   cheerio = cheerio || (await import("https://esm.sh/cheerio@1.1.0"));
   const nativeFetch = globalThis.fetch.bind(globalThis);
+  customBase = customBase.replace(/\/+$/, "");
+  let customList;
+  const customProviders = () => (customList = customList || nativeFetch(customBase + "/manifest.json").then((r) => (r.ok ? r.json() : [])).catch(() => []));
   // upstream urls.json + our overrides (cached 10 min)
   let urlsCache;
   const mergedUrls = () => {
@@ -113,7 +117,8 @@ export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio, 
     const key = provider + "/" + name;
     if (cache.has(key)) return cache.get(key);
     const p = (async () => {
-      const res = await nativeFetch(`${base}/dist/${provider}/${name}.js`);
+      const isCustom = (await customProviders()).some((p) => p.value === provider);
+      const res = await nativeFetch(`${isCustom ? customBase : base + "/dist"}/${provider}/${name}.js`);
       if (res.status === 404) return null;
       if (!res.ok) throw new Error(`Cannot load ${key}: HTTP ${res.status}`);
       const code = await res.text();
@@ -143,7 +148,8 @@ export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio, 
     proxyUrl: (u, h) => proxyUrl(worker, u, h),
     async providers() {
       const res = await nativeFetch(`${base}/manifest.json`);
-      return (await res.json()).filter((p) => !p.disabled);
+      const up = await res.json();
+      return [...up, ...(await customProviders())].filter((p) => !p.disabled);
     },
     async catalog(provider) {
       const m = await need(provider, "catalog");
@@ -161,7 +167,7 @@ export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio, 
     async getStream(provider, link, type = "movie", { signal, isDownload } = {}) {
       const streams = await (await need(provider, "stream")).getStream({ link, type, signal, providerContext, isDownload });
       // playUrl = URL to give your <video>/hls.js player (goes through the worker)
-      return streams.map((s) => ({ ...s, playUrl: s.type === "embed" ? s.link : proxyUrl(worker, s.link, s.headers) }));
+      return streams.map((s) => ({ ...s, playUrl: s.type === "embed" || s.type === "iframe" ? s.link : proxyUrl(worker, s.link, s.headers) }));
     },
   };
 }
