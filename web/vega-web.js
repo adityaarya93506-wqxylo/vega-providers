@@ -33,13 +33,14 @@ export function proxyUrl(worker, target, headers) {
 }
 
 // allowPost: set true only after your worker supports POST on /api/proxy (see README)
-export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio, allowPost = false, customBase = DEFAULT_CUSTOM } = {}) {
+export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio, allowPost = false, customBase = DEFAULT_CUSTOM, hostRemap = { "kisskh.is": "kisskh.do" } } = {}) {
   if (!worker) throw new Error("createVega: `worker` URL is required");
   worker = worker.replace(/\/+$/, "");
   base = base.replace(/\/+$/, "");
   axios = axios || (await import("https://esm.sh/axios@1.10.0")).default;
   cheerio = cheerio || (await import("https://esm.sh/cheerio@1.1.0"));
   const nativeFetch = globalThis.fetch.bind(globalThis);
+  const mapHost = (u) => { try { const x = new URL(u); if (hostRemap[x.hostname]) { x.hostname = hostRemap[x.hostname]; return x.href; } } catch (e) {} return u; };
   customBase = customBase.replace(/\/+$/, "");
   let customList;
   const customProviders = () => (customList = customList || nativeFetch(customBase + "/manifest.json").then((r) => (r.ok ? r.json() : [])).catch(() => []));
@@ -70,7 +71,7 @@ export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio, 
     const method = (init.method || "GET").toUpperCase();
     onlyGet(method, url);
     const hdrs = init.headers instanceof Headers ? Object.fromEntries(init.headers.entries()) : init.headers;
-    return nativeFetch(proxyUrl(worker, url, hdrs), { method, signal: init.signal, ...(method === "POST" ? { body: init.body } : {}) });
+    return nativeFetch(proxyUrl(worker, mapHost(url), hdrs), { method, signal: init.signal, ...(method === "POST" ? { body: init.body } : {}) });
   };
 
   // axios instance that sends every request through the worker
@@ -80,7 +81,7 @@ export async function createVega({ worker, base = DEFAULT_BASE, axios, cheerio, 
       const target = axios.getUri(config);
       if (target === URLS_UPSTREAM) return { data: JSON.stringify(await mergedUrls()), status: 200, statusText: "OK", headers: { "content-type": "application/json" }, config, request: {} };
       onlyGet(method, target);
-      const res = await nativeFetch(proxyUrl(worker, target, config.headers), { method, signal: config.signal, ...(method === "POST" ? { body: config.data } : {}) });
+      const res = await nativeFetch(proxyUrl(worker, mapHost(target), config.headers), { method, signal: config.signal, ...(method === "POST" ? { body: config.data } : {}) });
       const binary = config.responseType === "arraybuffer" || config.responseType === "blob";
       const data = binary ? await res.arrayBuffer() : await res.text();
       const response = {
