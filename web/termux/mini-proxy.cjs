@@ -2,6 +2,7 @@
 // mini-proxy.js - local stand-in for the Cloudflare worker's /api/proxy.
 // Runs on YOUR phone/PC, so requests go out with your own IP (like your browser does).
 // Termux: pkg install nodejs && node mini-proxy.js   then use http://127.0.0.1:8787 as the "worker" in vega-web.
+try { require("dns").setDefaultResultOrder("ipv4first"); } catch (e) {} // proot/Android: IPv6 often broken
 const http = require("http");
 const { Readable } = require("stream");
 const PORT = +process.env.PORT || 8787;
@@ -31,7 +32,10 @@ http.createServer(async (req, res) => {
   const ac = new AbortController(); res.on("close", () => ac.abort());
   const chunks = []; if (req.method === "POST") for await (const c of req) chunks.push(c);
   try {
+    const tm = setTimeout(() => ac.abort(), 30000);
     const r = await fetch(target, { method: req.method === "POST" ? "POST" : req.method === "HEAD" ? "HEAD" : "GET", headers: h, body: req.method === "POST" ? Buffer.concat(chunks) : undefined, redirect: "follow", signal: ac.signal });
+    clearTimeout(tm);
+    if (!r.ok) console.log(r.status, target.slice(0, 100));
     const ct = r.headers.get("content-type") || "", out = { ...CORS };
     if (req.method !== "HEAD" && r.ok && isHls(target, ct)) {
       const text = await r.text();
@@ -42,5 +46,5 @@ http.createServer(async (req, res) => {
     res.writeHead(r.status, out);
     if (!r.body || req.method === "HEAD") return res.end();
     Readable.fromWeb(r.body).on("error", () => res.destroy()).pipe(res);
-  } catch (e) { res.writeHead(502, CORS); res.end("proxy error: " + e.message); }
+  } catch (e) { const why = (e.cause && (e.cause.code || e.cause.message)) || e.message; console.log("FAIL", target.slice(0, 100), why); res.writeHead(502, CORS); res.end("proxy error: " + why); }
 }).listen(PORT, process.env.HOST || "127.0.0.1", () => console.log("mini-proxy on http://127.0.0.1:" + PORT));
