@@ -36,7 +36,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
 <script type="module">
-import { createVega } from "./vega-web.js?v=6";
+import { createVega } from "./vega-web.js?v=7";
 const $ = (id) => document.getElementById(id);
 const GOOD = new Set(["anikoto","animesub","dramacool","durbinLive","gokuHD","internetArchive","kickAssAnime","vega","movies4u","moviezwap","luxMovies","animeworld","kisskhml","animesalt"]);
 let vega, hls;
@@ -63,6 +63,7 @@ $("prov").onchange = loadCats;
 $("cat").onchange = loadPosts;
 
 async function loadCats() {
+  if (hls) { hls.destroy(); hls = null; } const vv = $("v"); vv.pause(); vv.removeAttribute("src"); vv.load(); // clear previous video
   await run("Catalog", async () => {
     const c = await vega.catalog($("prov").value);
     const all = [...c.catalog, ...c.genres];
