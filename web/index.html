@@ -31,12 +31,15 @@
 <select id="cat" disabled></select>
 <div id="status"></div>
 <video id="v" controls playsinline></video>
+<div id="ctl" style="display:none"><select id="qsel"></select> <select id="asel"></select> <select id="ssel"></select> <button id="cp">Link copy</button></div>
+<label id="sbwrap" style="display:none"><input type="checkbox" id="sb" checked> Popup/ads block (sandbox)</label>
+<iframe id="emb" allowfullscreen allow="autoplay; fullscreen; picture-in-picture" style="display:none;width:100%;aspect-ratio:16/9;border:0;margin-top:8px;background:#000"></iframe>
 <div id="detail"></div>
 <div id="grid"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
 <script type="module">
-import { createVega } from "./vega-web.js?v=7";
+import { createVega } from "./vega-web.js?v=8";
 const $ = (id) => document.getElementById(id);
 const GOOD = new Set(["anikoto","animesub","dramacool","durbinLive","gokuHD","internetArchive","kickAssAnime","vega","movies4u","moviezwap","luxMovies","animeworld","kisskhml","animesalt"]);
 let vega, hls;
@@ -103,16 +106,83 @@ async function streams(link, type) {
   const d = $("detail"); d.append(el("h4", { textContent: "Servers" }));
   s.forEach((x) => d.append(btn(`${x.server} · ${x.type}${x.quality ? " · " + x.quality : ""}`, () => play(x))));
 }
+const qsel = $("qsel"), asel = $("asel"), ssel = $("ssel"), emb = $("emb"), ctl = $("ctl");
+let lastS = null;
+const opt = (v, t) => el("option", { value: String(v), textContent: t });
+const showCtl = () => { ctl.style.display = ""; qsel.style.display = qsel.options.length > 2 ? "" : "none"; asel.style.display = asel.options.length > 1 ? "" : "none"; ssel.style.display = ssel.options.length > 1 ? "" : "none"; };
+function resetPlayer() {
+  if (hls) { hls.destroy(); hls = null; }
+  const v = $("v"); v.pause(); v.querySelectorAll("track").forEach((t) => t.remove()); v.removeAttribute("src"); v.load();
+  emb.removeAttribute("src"); emb.style.display = "none"; $("sbwrap").style.display = "none"; ctl.style.display = "none";
+  [qsel, asel, ssel].forEach((s) => s.replaceChildren());
+}
+function buildSubUi() {
+  const v = $("v"), items = [opt("off", "Subtitles: Off")];
+  if (hls) hls.subtitleTracks.forEach((t, i) => items.push(opt("h:" + i, (t.name || "Sub " + (i + 1)) + (t.lang ? " [" + t.lang + "]" : ""))));
+  v.querySelectorAll("track[data-ext]").forEach((t, i) => items.push(opt("t:" + i, "* " + (t.label || "Sub " + (i + 1)))));
+  const cur = ssel.value; ssel.replaceChildren(...items); if ([...ssel.options].some((o) => o.value === cur)) ssel.value = cur; showCtl();
+}
+function buildHlsUi() {
+  if (!hls) return;
+  const lv = hls.levels.map((l, i) => ({ i, h: l.height || 0, b: l.bitrate || 0 })).sort((a, b) => b.h - a.h || b.b - a.b);
+  qsel.replaceChildren(opt(-1, "Quality: Auto"), ...lv.map((x) => opt(x.i, x.h ? x.h + "p" : Math.round(x.b / 1000) + " kbps")));
+  qsel.value = String(hls.autoLevelEnabled ? -1 : hls.currentLevel);
+  asel.replaceChildren(...hls.audioTracks.map((t, i) => opt(i, "Audio: " + (t.name || "Track " + (i + 1)) + (t.lang ? " [" + t.lang + "]" : ""))));
+  if (hls.audioTracks.length) asel.value = String(hls.audioTrack);
+  buildSubUi();
+}
+function buildNativeUi() {
+  const at = $("v").audioTracks;
+  if (at && at.length > 1) asel.replaceChildren(...[...at].map((t, i) => opt(i, "Audio: " + (t.label || t.language || "Track " + (i + 1)))));
+  buildSubUi();
+}
+qsel.onchange = () => { if (hls) hls.currentLevel = +qsel.value; };
+asel.onchange = () => { if (hls) hls.audioTrack = +asel.value; else { const at = $("v").audioTracks; if (at) for (let i = 0; i < at.length; i++) at[i].enabled = i === +asel.value; } };
+ssel.onchange = () => {
+  const v = $("v"), val = ssel.value;
+  [...v.textTracks].forEach((t) => (t.mode = "disabled")); if (hls) hls.subtitleTrack = -1;
+  if (val === "off") return;
+  if (val[0] === "h" && hls) { hls.subtitleDisplay = true; hls.subtitleTrack = +val.slice(2); }
+  else if (val[0] === "t") { const t = v.querySelectorAll("track[data-ext]")[+val.slice(2)]; if (t) t.track.mode = "showing"; }
+};
+$("cp").onclick = () => { if (lastS) navigator.clipboard.writeText(lastS.link).then(() => status("Link copy ho gaya"), () => status(lastS.link)); };
+$("sb").onchange = () => { if (lastS && (lastS.type === "embed" || lastS.type === "iframe")) play(lastS); };
+const srtToVtt = (t) => "WEBVTT\n\n" + t.replace(/^\uFEFF/, "").replace(/\r\n|\r/g, "\n").replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2");
+async function addExternalSubs(s) {
+  const subs = Array.isArray(s.subtitles) ? s.subtitles : [], v = $("v");
+  for (const sub of subs.slice(0, 40)) {
+    const u = sub.uri || sub.url || sub.link; if (!u) continue;
+    try {
+      const r = await fetch(vega.proxyUrl(u, s.headers)); if (!r.ok) continue;
+      let t = await r.text(); if (!t.trimStart().startsWith("WEBVTT")) t = srtToVtt(t);
+      const tr = el("track", { kind: "subtitles", label: sub.title || sub.language || "Sub", srclang: String(sub.language || "").slice(0, 8), src: URL.createObjectURL(new Blob([t], { type: "text/vtt" })) });
+      tr.dataset.ext = "1"; v.append(tr);
+    } catch (e) {}
+  }
+  buildSubUi();
+}
 function play(s) {
-  const v = $("v"); if (hls) { hls.destroy(); hls = null; }
-  if (s.type === "embed" || s.type === "iframe") return window.open(s.link, "_blank");
+  resetPlayer(); lastS = s; $("cp").style.display = "";
+  const v = $("v");
   if (s.type === "torrent" || /^magnet:/i.test(s.link)) return status("Ye torrent link hai, browser mein seedha nahi chalega", true);
-  status("Playing: " + s.server);
-  const isHls = s.type === "m3u8" || /m3u8/i.test(s.link);
-  if (isHls && window.Hls && Hls.isSupported()) { hls = new Hls(); hls.loadSource(s.playUrl); hls.attachMedia(v); hls.on(Hls.Events.ERROR, async (_, d) => { if (!d.fatal) return; let info = ""; try { const r = await fetch(s.playUrl); const t = await r.text(); info = " | worker HTTP " + r.status + ": " + t.slice(0, 90).replace(/\s+/g, " "); } catch (e) { info = " | fetch fail: " + e.message; } status("HLS " + d.details + (d.response ? " (" + d.response.code + ")" : "") + info + " | host: " + (() => { try { return new URL(decodeURIComponent(s.playUrl.split("url=")[1].split("&")[0])).hostname; } catch { return "?"; } })(), true); }); }
-  else v.src = s.playUrl;
-  v.play().catch(() => {});
-  v.scrollIntoView({ behavior: "smooth" });
+  if (s.type === "embed" || s.type === "iframe") {
+    $("sbwrap").style.display = ""; ctl.style.display = ""; qsel.style.display = asel.style.display = ssel.style.display = "none"; emb.style.display = "block";
+    if ($("sb").checked) emb.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-presentation"); else emb.removeAttribute("sandbox");
+    emb.src = s.link; status("Embed: " + s.server + " (na chale to sandbox ka tick hatao)"); emb.scrollIntoView({ behavior: "smooth" }); return;
+  }
+  status("Playing: " + s.server + " (" + s.type + ")");
+  const isHls = s.type === "m3u8" || s.type === "hls" || /m3u8/i.test(s.link);
+  v.onerror = () => status("Video load nahi hua (MKV ya block ho sakta hai). 'Link copy' karke VLC/MX Player mein kholo", true);
+  if (isHls && window.Hls && Hls.isSupported()) {
+    hls = new Hls({ enableWebVTT: true }); hls.loadSource(s.playUrl); hls.attachMedia(v);
+    [Hls.Events.MANIFEST_PARSED, Hls.Events.AUDIO_TRACKS_UPDATED, Hls.Events.SUBTITLE_TRACKS_UPDATED].forEach((e) => hls.on(e, buildHlsUi));
+    hls.on(Hls.Events.ERROR, async (_, d) => {
+      if (!d.fatal) return; let info = "";
+      try { const r = await fetch(s.playUrl); const t = await r.text(); info = " | worker HTTP " + r.status + ": " + t.slice(0, 90).replace(/\s+/g, " "); } catch (e) { info = " | fetch fail: " + e.message; }
+      status("HLS " + d.details + (d.response ? " (" + d.response.code + ")" : "") + info, true);
+    });
+  } else { v.src = s.playUrl; v.addEventListener("loadedmetadata", buildNativeUi, { once: true }); }
+  addExternalSubs(s); v.play().catch(() => {}); v.scrollIntoView({ behavior: "smooth" });
 }
 </script>
 </body>
